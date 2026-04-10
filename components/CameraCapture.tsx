@@ -144,14 +144,14 @@ export default function CameraCapture({ onCapture }: CameraCaptureProps) {
           </div>
         </div>
 
-        <p className="text-sm text-neutral-500 text-center">
+        <p className="text-sm text-neutral-500 dark:text-neutral-400 text-center">
           Yüzünüzü oval çerçeve içinde ortalayın
         </p>
 
         <div className="flex gap-3">
           <button
             onClick={stopCamera}
-            className="px-5 py-2.5 rounded-full border border-neutral-300 text-sm font-medium text-neutral-700 hover:bg-neutral-100 transition-colors"
+            className="px-5 py-2.5 rounded-full border border-neutral-300 dark:border-neutral-600 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
           >
             Vazgeç
           </button>
@@ -176,8 +176,8 @@ export default function CameraCapture({ onCapture }: CameraCaptureProps) {
         <div className="w-16 h-16 rounded-full bg-neutral-900 flex items-center justify-center mx-auto mb-4">
           <FaceIcon />
         </div>
-        <h1 className="text-2xl font-bold text-neutral-900">Beauty AI</h1>
-        <p className="text-sm text-neutral-500 mt-1">Yüz şeklinize göre kişisel öneriler</p>
+        <h1 className="text-2xl font-bold text-neutral-900 dark:text-neutral-50">Beauty AI</h1>
+        <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1">Yüz şeklinize göre kişisel öneriler</p>
       </div>
 
       <div className="flex flex-col gap-3 w-full">
@@ -206,7 +206,7 @@ export default function CameraCapture({ onCapture }: CameraCaptureProps) {
 
         {/* Fotoğraf Yükle — aynı overlay yöntemi */}
         <div className="relative w-full">
-          <div className="w-full flex items-center gap-3 px-5 py-4 rounded-2xl border-2 border-neutral-200 text-neutral-800 font-medium cursor-pointer">
+          <div className="w-full flex items-center gap-3 px-5 py-4 rounded-2xl border-2 border-neutral-200 dark:border-neutral-700 text-neutral-800 dark:text-neutral-200 font-medium cursor-pointer">
             <UploadIcon />
             <span>Fotoğraf Yükle</span>
           </div>
@@ -220,12 +220,12 @@ export default function CameraCapture({ onCapture }: CameraCaptureProps) {
       </div>
 
       {error && (
-        <p className="text-sm text-red-600 text-center bg-red-50 rounded-xl px-4 py-3 border border-red-200">
+        <p className="text-sm text-red-600 dark:text-red-400 text-center bg-red-50 dark:bg-red-950 rounded-xl px-4 py-3 border border-red-200 dark:border-red-900">
           {error}
         </p>
       )}
 
-      <p className="text-xs text-neutral-400 text-center leading-relaxed px-2">
+      <p className="text-xs text-neutral-400 dark:text-neutral-500 text-center leading-relaxed px-2">
         Fotoğrafınız cihazınızda işlenir, hiçbir yere gönderilmez.
       </p>
     </div>

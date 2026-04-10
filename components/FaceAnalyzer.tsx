@@ -133,7 +133,7 @@ export default function FaceAnalyzer({ imageDataUrl, onReset }: FaceAnalyzerProp
 
   return (
     <div className="flex flex-col items-center gap-6 w-full max-w-2xl mx-auto px-4">
-      <div className="relative rounded-2xl overflow-hidden shadow-lg border border-neutral-200 bg-black w-full">
+      <div className="relative rounded-2xl overflow-hidden shadow-lg border border-neutral-200 dark:border-neutral-700 bg-black w-full">
         {/* Fotoğraf: canvas hazır olana kadar göster, hata durumunda da kalsın */}
         {!showCanvas && (
           <img
@@ -157,10 +157,10 @@ export default function FaceAnalyzer({ imageDataUrl, onReset }: FaceAnalyzerProp
 
       {/* Hata */}
       {state.status === "error" && (
-        <div className="w-full rounded-xl bg-red-50 border border-red-200 p-4 text-sm text-red-700">
+        <div className="w-full rounded-xl bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-900 p-4 text-sm text-red-700 dark:text-red-400">
           <p className="font-semibold mb-1">Analiz başarısız</p>
           <p className="mb-2">{state.message}</p>
-          <ul className="list-disc list-inside space-y-0.5 text-red-600">
+          <ul className="list-disc list-inside space-y-0.5 text-red-600 dark:text-red-400">
             <li>Yüzünüz kameraya doğrudan bakmalı</li>
             <li>Iyi aydınlatma sağlayın, arka plan sade olsun</li>
             <li>Yüzün tamamı çerçeve içinde görünmeli</li>
@@ -178,7 +178,7 @@ export default function FaceAnalyzer({ imageDataUrl, onReset }: FaceAnalyzerProp
 
       <button
         onClick={onReset}
-        className="mt-2 px-6 py-2.5 rounded-full border border-neutral-300 text-sm font-medium text-neutral-700 hover:bg-neutral-100 transition-colors"
+        className="mt-2 px-6 py-2.5 rounded-full border border-neutral-300 dark:border-neutral-600 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
       >
         Yeni Fotoğraf
       </button>
