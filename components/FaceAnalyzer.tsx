@@ -6,6 +6,7 @@ import { analyzeFaceShape } from "@/lib/faceShape";
 import { analyzeColors, getColorAdvice } from "@/lib/colorAnalysis";
 import { getRecommendation } from "@/lib/catalog";
 import type { FaceShape } from "@/lib/catalog";
+import { drawBeautyOverlay } from "@/lib/beautyOverlay";
 import ResultCard from "./ResultCard";
 
 // Oturum boyunca tek model instance — her fotoğrafta yeniden yüklenmiyor
@@ -62,9 +63,16 @@ type AnalysisState =
   | { status: "done"; faceShape: FaceShape; colorAdvice: string }
   | { status: "error"; message: string };
 
+type Landmark = { x: number; y: number; z: number };
+
 export default function FaceAnalyzer({ imageDataUrl, onReset }: FaceAnalyzerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  const landmarksRef = useRef<Landmark[] | null>(null);
+  const faceShapeRef = useRef<FaceShape | null>(null);
+
   const [state, setState] = useState<AnalysisState>({ status: "loading" });
+  const [overlayVisible, setOverlayVisible] = useState(true);
 
   const runAnalysis = useCallback(async () => {
     const canvas = canvasRef.current;
@@ -111,7 +119,14 @@ export default function FaceAnalyzer({ imageDataUrl, onReset }: FaceAnalyzerProp
       const colorProfile = analyzeColors(imageData, landmarks, canvas.width, canvas.height);
       const colorAdvice = getColorAdvice(colorProfile);
 
-      drawLandmarks(ctx, landmarks, canvas.width, canvas.height);
+      // Beauty overlay — önerilen kaş/eyeliner/dudak şekli yüzün üzerine çizilir
+      const rec = getRecommendation(shape);
+      drawBeautyOverlay(ctx, landmarks, rec.brow, rec.eyeliner, rec.lip, canvas.width, canvas.height);
+
+      // Redraw için referansları sakla
+      imgRef.current = img;
+      landmarksRef.current = landmarks;
+      faceShapeRef.current = shape;
 
       setState({ status: "done", faceShape: shape, colorAdvice });
     } catch (err) {
@@ -127,8 +142,27 @@ export default function FaceAnalyzer({ imageDataUrl, onReset }: FaceAnalyzerProp
     runAnalysis();
   }, [runAnalysis]);
 
+  const handleToggleOverlay = useCallback(() => {
+    setOverlayVisible((prev) => {
+      const next = !prev;
+      const canvas = canvasRef.current;
+      const img = imgRef.current;
+      const lm = landmarksRef.current;
+      const shape = faceShapeRef.current;
+      if (canvas && img && lm && shape) {
+        const ctx = canvas.getContext("2d")!;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        if (next) {
+          const rec = getRecommendation(shape);
+          drawBeautyOverlay(ctx, lm, rec.brow, rec.eyeliner, rec.lip, canvas.width, canvas.height);
+        }
+      }
+      return next;
+    });
+  }, []);
+
   const isProcessing = state.status === "loading" || state.status === "analyzing";
-  // Canvas analiz tamamlanana kadar 0×0 kalır — loading sırasında img göster
   const showCanvas = state.status === "done";
 
   return (
@@ -176,57 +210,22 @@ export default function FaceAnalyzer({ imageDataUrl, onReset }: FaceAnalyzerProp
         />
       )}
 
-      <button
-        onClick={onReset}
-        className="mt-2 px-6 py-2.5 rounded-full border border-neutral-300 dark:border-neutral-600 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
-      >
-        Yeni Fotoğraf
-      </button>
+      <div className="flex gap-3 mt-2">
+        {state.status === "done" && (
+          <button
+            onClick={handleToggleOverlay}
+            className="px-5 py-2.5 rounded-full border border-neutral-300 dark:border-neutral-600 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+          >
+            {overlayVisible ? "Orijinal Göster" : "Makyajı Göster"}
+          </button>
+        )}
+        <button
+          onClick={onReset}
+          className="px-6 py-2.5 rounded-full border border-neutral-300 dark:border-neutral-600 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+        >
+          Yeni Fotoğraf
+        </button>
+      </div>
     </div>
   );
-}
-
-function drawLandmarks(
-  ctx: CanvasRenderingContext2D,
-  landmarks: { x: number; y: number; z: number }[],
-  w: number,
-  h: number
-) {
-  const groups = [
-    [46, 53, 52, 65, 55, 70, 63, 105, 66, 107],
-    [276, 283, 282, 295, 285, 300, 293, 334, 296, 336],
-    [61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291],
-    [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291],
-    [33, 160, 158, 133, 153, 144],
-    [362, 385, 387, 263, 373, 380],
-  ];
-
-  ctx.lineWidth = 1.2;
-  ctx.strokeStyle = "rgba(255, 200, 100, 0.8)";
-
-  groups.forEach((group) => {
-    ctx.beginPath();
-    group.forEach((idx, i) => {
-      const lm = landmarks[idx];
-      const x = lm.x * w;
-      const y = lm.y * h;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.closePath();
-    ctx.stroke();
-  });
-
-  const contour = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109, 10];
-  ctx.strokeStyle = "rgba(100, 200, 255, 0.5)";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  contour.forEach((idx, i) => {
-    const lm = landmarks[idx];
-    const x = lm.x * w;
-    const y = lm.y * h;
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  });
-  ctx.stroke();
 }
