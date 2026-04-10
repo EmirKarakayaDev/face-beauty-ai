@@ -38,9 +38,6 @@ export default function CameraCapture({ onCapture }: CameraCaptureProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  // Sabit ID'ler — useId() ürettiği ":r0:" gibi değerler iOS'ta for/id eşleşmesinde sorun çıkarıyor
-  const SELFIE_INPUT_ID = "beauty-selfie-input";
-  const FILE_INPUT_ID = "beauty-file-input";
 
   useEffect(() => {
     setUseMobileCamera(
@@ -185,21 +182,20 @@ export default function CameraCapture({ onCapture }: CameraCaptureProps) {
 
       <div className="flex flex-col gap-3 w-full">
         {useMobileCamera ? (
-          // Mobil: <label> ile native kamera — iOS'ta ref.click() bloklanır, label güvenlidir
-          <>
-            <label htmlFor={SELFIE_INPUT_ID} className={selfieClass}>
+          // Mobil: şeffaf input overlay — label+id iOS'ta capture ile çalışmıyor
+          <div className="relative w-full">
+            <div className={selfieClass}>
               <CameraIcon />
               <span>Selfie Çek</span>
-            </label>
+            </div>
             <input
-              id={SELFIE_INPUT_ID}
               type="file"
               accept="image/*"
               capture="user"
-              className="sr-only"
               onChange={handleFileChange}
+              style={{ position: "absolute", inset: 0, opacity: 0, width: "100%", height: "100%", cursor: "pointer" }}
             />
-          </>
+          </div>
         ) : (
           // Desktop: getUserMedia live preview
           <button onClick={startCamera} className={selfieClass}>
@@ -208,20 +204,19 @@ export default function CameraCapture({ onCapture }: CameraCaptureProps) {
           </button>
         )}
 
-        <label
-          htmlFor={FILE_INPUT_ID}
-          className="w-full flex items-center gap-3 px-5 py-4 rounded-2xl border-2 border-neutral-200 text-neutral-800 font-medium hover:bg-neutral-50 active:bg-neutral-50 transition-colors cursor-pointer"
-        >
-          <UploadIcon />
-          <span>Fotoğraf Yükle</span>
-        </label>
-        <input
-          id={FILE_INPUT_ID}
-          type="file"
-          accept="image/*"
-          className="sr-only"
-          onChange={handleFileChange}
-        />
+        {/* Fotoğraf Yükle — aynı overlay yöntemi */}
+        <div className="relative w-full">
+          <div className="w-full flex items-center gap-3 px-5 py-4 rounded-2xl border-2 border-neutral-200 text-neutral-800 font-medium cursor-pointer">
+            <UploadIcon />
+            <span>Fotoğraf Yükle</span>
+          </div>
+          <input
+            type="file"
+            accept="image/*"
+            onChange={handleFileChange}
+            style={{ position: "absolute", inset: 0, opacity: 0, width: "100%", height: "100%", cursor: "pointer" }}
+          />
+        </div>
       </div>
 
       {error && (
