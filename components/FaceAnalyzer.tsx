@@ -6,7 +6,7 @@ import { analyzeFaceShape } from "@/lib/faceShape";
 import { analyzeColors, getColorAdvice } from "@/lib/colorAnalysis";
 import { getRecommendation } from "@/lib/catalog";
 import type { FaceShape } from "@/lib/catalog";
-import { drawBeautyOverlay } from "@/lib/beautyOverlay";
+import { drawBeautyOverlay } from "@/lib/faceOverlay3d";
 import ResultCard from "./ResultCard";
 
 // Oturum boyunca tek model instance — her fotoğrafta yeniden yüklenmiyor
