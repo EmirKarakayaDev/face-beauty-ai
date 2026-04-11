@@ -13,9 +13,9 @@ const lp = (lm: LM[], i: number, w: number, h: number): Pt => ({
 const pts = (lm: LM[], idxs: number[], w: number, h: number): Pt[] =>
   idxs.map((i) => lp(lm, i, w, h));
 
-// Three.js is Y-up; canvas is Y-down. Flip Y when moving between them.
-const fy = (p: Pt, h: number): Pt => ({ x: p.x, y: h - p.y });
-const fyAll = (ps: Pt[], h: number): Pt[] => ps.map((p) => fy(p, h));
+// Three.js is Y-up; canvas is Y-down. Flip Y when compositing.
+const fy    = (p: Pt, h: number): Pt  => ({ x: p.x, y: h - p.y });
+const fyAll = (ps: Pt[], h: number)   => ps.map((p) => fy(p, h));
 
 // ── Deterministic pseudo-random ───────────────────────────────────────────────
 function dr(n: number): number {
@@ -25,15 +25,29 @@ function dr(n: number): number {
 
 const clamp = (v: number, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
 
-// ── Smooth quadratic bezier on a THREE.Shape / THREE.Path ────────────────────
+// ── Canvas 2D smooth bezier helper ───────────────────────────────────────────
+// Draws a quadratic bezier spline through `points` on a 2D canvas context.
+function smoothC(ctx: CanvasRenderingContext2D, points: Pt[], move: boolean) {
+  if (points.length < 2) return;
+  if (move) ctx.moveTo(points[0].x, points[0].y);
+  else       ctx.lineTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length - 1; i++) {
+    const mx = (points[i].x + points[i + 1].x) / 2;
+    const my = (points[i].y + points[i + 1].y) / 2;
+    ctx.quadraticCurveTo(points[i].x, points[i].y, mx, my);
+  }
+  ctx.lineTo(points[points.length - 1].x, points[points.length - 1].y);
+}
+
+// ── Three.js Shape smooth bezier helper ──────────────────────────────────────
 function smoothShape(
   target: THREE.Shape | THREE.Path,
   points: Pt[],
-  move = true
+  move = true,
 ) {
   if (points.length < 2) return;
   if (move) target.moveTo(points[0].x, points[0].y);
-  else target.lineTo(points[0].x, points[0].y);
+  else       target.lineTo(points[0].x, points[0].y);
   for (let i = 1; i < points.length - 1; i++) {
     const mx = (points[i].x + points[i + 1].x) / 2;
     const my = (points[i].y + points[i + 1].y) / 2;
@@ -43,80 +57,204 @@ function smoothShape(
 }
 
 // ── Landmark index groups ─────────────────────────────────────────────────────
-const L_BROW_L = [46, 53, 52, 65, 55];   // lower edge inner→outer
-const L_BROW_U = [70, 63, 105, 66, 107]; // upper edge outer→inner
+const L_BROW_L = [46, 53, 52, 65, 55];    // lower edge inner→outer
+const L_BROW_U = [70, 63, 105, 66, 107];  // upper edge outer→inner
+
 const R_BROW_L = [276, 283, 282, 295, 285];
 const R_BROW_U = [300, 293, 334, 296, 336];
 
-const L_EYE_TOP = [133, 158, 160, 33];  // inner→outer (33=temporal outer corner)
-const L_EYE_BOT = [33, 144, 153, 133];  // outer→inner
-const R_EYE_TOP = [362, 385, 387, 263];
-const R_EYE_BOT = [263, 373, 380, 362];
+// Both eyes: inner→outer for TOP, outer→inner for BOT.
+// Last element of TOP = outer/temporal corner → cat-eye wing goes outward.
+const L_EYE_TOP = [133, 158, 160, 33];   // inner→outer  (33 = temporal outer)
+const L_EYE_BOT = [33,  144, 153, 133];  // outer→inner
+const R_EYE_TOP = [362, 385, 387, 263];  // inner→outer  (263 = temporal outer)
+const R_EYE_BOT = [263, 373, 380, 362];  // outer→inner
 
 const LIP_UP = [61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291];
 const LIP_LO = [291, 375, 321, 405, 314, 17, 84, 181, 91, 146, 61];
 
-// ── Brow shape modifier (Three.js Y-up space) ─────────────────────────────────
-// upper array is outer→inner; t=0 is outer corner, t=1 is inner.
-// In Y-up space "lifting" the brow means +Y.
+// ── Brow upper-edge modifier (Canvas 2D: Y-down, "up" = smaller Y) ───────────
+// upper[] goes outer→inner; t=0 is outer corner, t=1 is inner.
 function modBrowUpper(
   upper: Pt[],
-  shape: BrowRecommendation["shape"],
-  browH: number // positive: upper sits above lower
+  shape:  BrowRecommendation["shape"],
+  browH:  number,  // > 0 when lower.y > upper.y (lower below upper on screen)
 ): Pt[] {
-  const n = upper.length;
+  const n    = upper.length;
   const lift = Math.abs(browH);
   return upper.map((p, i) => {
-    const t = i / (n - 1);
+    const t    = i / (n - 1);
     const arch = Math.sin(t * Math.PI);
     switch (shape) {
-      case "yuksek_kavis": return { x: p.x, y: p.y + lift * 0.85 * arch };
+      case "yuksek_kavis": return { x: p.x, y: p.y - lift * 0.85 * arch };
       case "duz": {
         const avg = upper.reduce((s, q) => s + q.y, 0) / n;
         return { x: p.x, y: p.y * 0.25 + avg * 0.75 };
       }
-      case "ince":    return { x: p.x, y: p.y - lift * 0.45 };
-      case "kavisli": return { x: p.x, y: p.y + lift * 0.45 * arch };
-      case "kalkik":  return { x: p.x, y: p.y + lift * 0.55 * (1 - t) };
+      case "ince":    return { x: p.x, y: p.y + lift * 0.40 };          // lower = thinner
+      case "kavisli": return { x: p.x, y: p.y - lift * 0.45 * arch };
+      case "kalkik":  return { x: p.x, y: p.y - lift * 0.55 * (1 - t) };// raise outer end
       default:        return p;
     }
   });
 }
 
-// ── Brow hair texture ─────────────────────────────────────────────────────────
-// Draws hair strokes onto an offscreen canvas and returns it as a Three.js
-// CanvasTexture. Because THREE.CanvasTexture has flipY=true, canvas Y=0 (top)
-// maps to UV.y=1 (top of brow in Y-up) and canvas Y=texH maps to UV.y=0 (brow
-// bottom). So startY≈texH → brow bottom and endY≈0 → brow top: correct
-// direction for hair growing upward from skin.
-function makeBrowTexture(texW: number, texH: number, seed: number): THREE.CanvasTexture {
-  const tc = document.createElement("canvas");
-  tc.width  = Math.max(1, texW);
-  tc.height = Math.max(1, texH);
-  const tctx = tc.getContext("2d")!;
+// ── Eyebrow renderer — pure Canvas 2D ─────────────────────────────────────────
+// Draws a soft blurred base + clipped hair strokes.
+// No Three.js needed — avoids heavy multiply layering that looked blocky.
+function drawBrow(
+  ctx:        CanvasRenderingContext2D,
+  lm:         LM[],
+  lowerIdxs:  number[],
+  upperIdxs:  number[],
+  shape:      BrowRecommendation["shape"],
+  w:          number,
+  h:          number,
+  seed:       number,
+) {
+  const lower = pts(lm, lowerIdxs, w, h);  // inner→outer
+  const upper = pts(lm, upperIdxs, w, h);  // outer→inner
 
-  const N = 110;
+  const browH =
+    lower.reduce((s, p) => s + p.y, 0) / lower.length -
+    upper.reduce((s, p) => s + p.y, 0) / upper.length;
+
+  const modUpper = modBrowUpper(upper, shape, browH);
+
+  // Reusable: build closed brow outline on the current path
+  const buildPath = () => {
+    ctx.beginPath();
+    smoothC(ctx, lower,    true);   // lower inner→outer
+    smoothC(ctx, modUpper, false);  // upper outer→inner
+    ctx.closePath();
+  };
+
+  // ── Layer 1: soft blurred fill ─────────────────────────────────────────────
+  ctx.save();
+  ctx.filter = "blur(2px)";
+  ctx.globalCompositeOperation = "multiply";
+  buildPath();
+  ctx.fillStyle = "rgba(48, 26, 7, 0.20)";
+  ctx.fill();
+  ctx.restore();
+
+  // ── Layer 2: hair strokes clipped inside brow shape ────────────────────────
+  const allPts = [...lower, ...modUpper];
+  const minX   = Math.min(...allPts.map((p) => p.x));
+  const maxX   = Math.max(...allPts.map((p) => p.x));
+  const minY   = Math.min(...allPts.map((p) => p.y)); // brow top
+  const maxY   = Math.max(...allPts.map((p) => p.y)); // brow bottom
+  const bw     = Math.max(1, maxX - minX);
+  const bh     = Math.max(1, maxY - minY);
+
+  ctx.save();
+  buildPath();
+  ctx.clip();  // restrict strokes to brow area
+
+  const N = 100;
   for (let i = 0; i < N; i++) {
-    // Spread evenly across the brow width with slight jitter
-    const tx   = (dr(seed + i * 2) * 1.08 - 0.04) * texW;
-    const startY = texH * (0.88 + dr(seed + i * 7)  * 0.12);
-    const endY   = texH * (0.02 + dr(seed + i * 11) * 0.22);
-    // Control point for gentle curve
-    const cpX  = tx + (dr(seed + i * 17) - 0.5) * texW * 0.05;
-    const cpY  = startY * 0.35 + endY * 0.65;
-    const alpha = 0.36 + dr(seed + i * 19) * 0.54;
-    const lw    = 0.45 + dr(seed + i * 23) * 1.55;
+    const tx     = minX + (dr(seed + i * 2) * 1.08 - 0.04) * bw;
+    const startY = maxY - dr(seed + i * 7)  * bh * 0.15;  // near brow bottom
+    const endY   = minY + dr(seed + i * 11) * bh * 0.28;  // near brow top
+    const cpX    = tx   + (dr(seed + i * 17) - 0.5) * bw * 0.05;
+    const cpY    = startY * 0.38 + endY * 0.62;
+    const alpha  = 0.28  + dr(seed + i * 19) * 0.40;
+    const lw     = 0.5   + dr(seed + i * 23) * 1.4;
 
-    tctx.strokeStyle = `rgba(22, 12, 4, ${alpha.toFixed(2)})`;
-    tctx.lineWidth   = lw;
-    tctx.lineCap     = "round";
-    tctx.beginPath();
-    tctx.moveTo(tx, startY);
-    tctx.quadraticCurveTo(cpX, cpY, tx + (dr(seed + i * 29) - 0.5) * texW * 0.04, endY);
-    tctx.stroke();
+    ctx.strokeStyle = `rgba(28, 14, 4, ${alpha.toFixed(2)})`;
+    ctx.lineWidth   = lw;
+    ctx.lineCap     = "round";
+    ctx.beginPath();
+    ctx.moveTo(tx, startY);
+    ctx.quadraticCurveTo(
+      cpX, cpY,
+      tx + (dr(seed + i * 29) - 0.5) * bw * 0.04,
+      endY,
+    );
+    ctx.stroke();
   }
 
-  return new THREE.CanvasTexture(tc);
+  ctx.restore();
+}
+
+// ── Eyeliner — smooth filled shape (no segment joints = no sharp corners) ─────
+// Constructs the liner as a filled polygon:
+//   forward along linerEdge (top shifted upward, tapered inner→outer),
+//   backward along the eyelid landmarks (outer→inner).
+function drawEyeliner(
+  ctx:      CanvasRenderingContext2D,
+  lm:       LM[],
+  topIdxs:  number[],
+  botIdxs:  number[],
+  style:    EyelinerRecommendation["style"],
+  w:        number,
+  h:        number,
+) {
+  const top  = pts(lm, topIdxs, w, h);  // inner→outer
+  const bot  = pts(lm, botIdxs, w, h);  // outer→inner
+  const eyeW = Math.abs(top[top.length - 1].x - top[0].x);
+
+  const maxLW =
+    style === "dramatik"                          ? eyeW * 0.080
+    : style === "klasik" || style === "cat_eye"  ? eyeW * 0.054
+    :                                               eyeW * 0.036;
+
+  // Build the outer (upper) edge of the liner strip
+  const n          = top.length;
+  const linerEdge: Pt[] = top.map((p, i) => {
+    const t         = i / (n - 1);
+    const thickness = maxLW * (0.08 + 0.92 * t); // thin at inner, thick at outer
+    return { x: p.x, y: p.y - thickness };        // canvas Y-down: -y = upward
+  });
+
+  ctx.save();
+  ctx.fillStyle   = "rgba(6, 4, 14, 0.88)";
+  ctx.shadowColor = "rgba(0, 0, 0, 0.28)";
+  ctx.shadowBlur  = 1.5;
+
+  // Filled strip: linerEdge inner→outer, then lid reversed outer→inner
+  ctx.beginPath();
+  smoothC(ctx, linerEdge,         true);
+  smoothC(ctx, [...top].reverse(), false);
+  ctx.closePath();
+  ctx.fill();
+
+  // Cat-eye wing (extends from outer corner outward + upward)
+  if (style === "cat_eye") {
+    const outer   = top[top.length - 1];
+    const prev    = top[top.length - 2];
+    const angle   = Math.atan2(outer.y - prev.y, outer.x - prev.x) - Math.PI / 5.5;
+    const wingLen = eyeW * 0.22;
+    ctx.beginPath();
+    ctx.moveTo(outer.x, outer.y);
+    ctx.lineTo(
+      outer.x + Math.cos(angle) * wingLen,
+      outer.y + Math.sin(angle) * wingLen,
+    );
+    ctx.lineWidth   = maxLW * 0.45;
+    ctx.strokeStyle = "rgba(6, 4, 14, 0.88)";
+    ctx.lineCap     = "round";
+    ctx.stroke();
+  }
+
+  // Lower lid liner for alt_hat — drawn below the eyelid (+y direction)
+  if (style === "alt_hat") {
+    const m       = bot.length;
+    const botEdge: Pt[] = bot.map((p, i) => {
+      const t         = i / (m - 1);              // t=0: outer, t=1: inner
+      const thickness = maxLW * 0.38 * (0.20 + 0.80 * (1 - t)); // thicker at outer
+      return { x: p.x, y: p.y + thickness };      // +y = below eyelid
+    });
+
+    ctx.beginPath();
+    smoothC(ctx, botEdge,          true);
+    smoothC(ctx, [...bot].reverse(), false);
+    ctx.closePath();
+    ctx.fillStyle = "rgba(6, 4, 14, 0.68)";
+    ctx.fill();
+  }
+
+  ctx.restore();
 }
 
 // ── Three.js renderer singleton ───────────────────────────────────────────────
@@ -125,8 +263,8 @@ let _renderer: THREE.WebGLRenderer | null = null;
 function getRenderer(): THREE.WebGLRenderer {
   if (!_renderer) {
     _renderer = new THREE.WebGLRenderer({
-      alpha: true,
-      antialias: true,
+      alpha:                true,
+      antialias:            true,
       preserveDrawingBuffer: true,
     });
     _renderer.setClearColor(0x000000, 0);
@@ -134,172 +272,17 @@ function getRenderer(): THREE.WebGLRenderer {
   return _renderer;
 }
 
-// Orthographic camera mapping pixel coords directly (Y-flipped).
-// Place objects at Three.js coords: x = canvas_x, y = canvas_h - canvas_y
+// Orthographic camera mapping pixel coords 1:1.
+// Camera at origin: world_x → NDC_x = 2*x/w − 1  ✓
 function makeCamera(w: number, h: number): THREE.OrthographicCamera {
   const cam = new THREE.OrthographicCamera(0, w, h, 0, -200, 200);
-  // Camera must be at origin (not w/2, h/2) so the frustum maps pixel coords 1:1.
-  // With position=(0,0,100) and default look direction (-Z):
-  //   world_x → NDC_x = 2*x/w - 1  (x=0 → -1 left edge, x=w → 1 right edge) ✓
-  //   world_y = h-canvas_y → NDC_y = 2*(h-y)/h - 1  (y=0 top → 1, y=h bottom → -1) ✓
+  // Must be at (0,0,z), NOT at (w/2, h/2, z).
+  // Placing at (w/2,h/2,z) would shift all rendered content by (w/2, h/2).
   cam.position.set(0, 0, 100);
   return cam;
 }
 
-// ── Brow renderer ─────────────────────────────────────────────────────────────
-function drawBrow3d(
-  ctx: CanvasRenderingContext2D,
-  lm: LM[],
-  lowerIdxs: number[],
-  upperIdxs: number[],
-  shape: BrowRecommendation["shape"],
-  w: number,
-  h: number,
-  texSeed: number,
-  renderer: THREE.WebGLRenderer,
-  camera: THREE.OrthographicCamera
-) {
-  const lower = fyAll(pts(lm, lowerIdxs, w, h), h);
-  const upper = fyAll(pts(lm, upperIdxs, w, h), h);
-
-  // browH > 0 means upper sits above lower in Three.js Y-up
-  const browH =
-    upper.reduce((s, p) => s + p.y, 0) / upper.length -
-    lower.reduce((s, p) => s + p.y, 0) / lower.length;
-
-  const modUpper = modBrowUpper(upper, shape, browH);
-
-  // Brow outline: inner→outer along lower, then outer→inner along upper
-  const browShape = new THREE.Shape();
-  smoothShape(browShape, lower, true);    // lower edge inner→outer
-  smoothShape(browShape, modUpper, false); // upper edge outer→inner (continues)
-  browShape.closePath();
-
-  // Bounding box for texture sizing
-  const allPts  = [...lower, ...modUpper];
-  const texW    = Math.ceil(Math.max(1, Math.max(...allPts.map((p) => p.x)) - Math.min(...allPts.map((p) => p.x))));
-  const texH    = Math.ceil(Math.max(1, Math.max(...allPts.map((p) => p.y)) - Math.min(...allPts.map((p) => p.y))));
-
-  renderer.setSize(w, h);
-
-  // ── Layer 1: Blurred soft base ─────────────────────────────────────────────
-  {
-    const scene   = new THREE.Scene();
-    const geo     = new THREE.ShapeGeometry(browShape);
-    const mat     = new THREE.MeshBasicMaterial({
-      color: new THREE.Color(0.102, 0.063, 0.024),
-      transparent: true,
-      opacity: 0.38,
-      depthWrite: false,
-    });
-    scene.add(new THREE.Mesh(geo, mat));
-    renderer.clear();
-    renderer.render(scene, camera);
-
-    ctx.save();
-    ctx.filter = "blur(3px)";
-    ctx.globalCompositeOperation = "multiply";
-    ctx.drawImage(renderer.domElement, 0, 0);
-    ctx.restore();
-
-    mat.dispose();
-    geo.dispose();
-  }
-
-  // ── Layer 2: Hair texture ──────────────────────────────────────────────────
-  {
-    const tex   = makeBrowTexture(texW, texH, texSeed);
-    const scene = new THREE.Scene();
-    const geo   = new THREE.ShapeGeometry(browShape);
-    const mat   = new THREE.MeshBasicMaterial({
-      map: tex,
-      transparent: true,
-      opacity: 0.95,
-      depthWrite: false,
-      alphaTest: 0.005,
-    });
-    scene.add(new THREE.Mesh(geo, mat));
-    renderer.clear();
-    renderer.render(scene, camera);
-
-    ctx.save();
-    ctx.globalCompositeOperation = "multiply";
-    ctx.drawImage(renderer.domElement, 0, 0);
-    ctx.restore();
-
-    mat.dispose();
-    geo.dispose();
-    tex.dispose();
-  }
-}
-
-// ── Eyeliner (Canvas 2D — thin lines don't benefit from 3D) ──────────────────
-function drawEyeliner(
-  ctx: CanvasRenderingContext2D,
-  lm: LM[],
-  topIdxs: number[],
-  botIdxs: number[],
-  style: EyelinerRecommendation["style"],
-  w: number,
-  h: number
-) {
-  const top  = pts(lm, topIdxs, w, h);
-  const bot  = pts(lm, botIdxs, w, h);
-  const eyeW = Math.abs(top[top.length - 1].x - top[0].x);
-
-  const maxLW =
-    style === "dramatik"                         ? eyeW * 0.092
-    : style === "klasik" || style === "cat_eye" ? eyeW * 0.062
-    : eyeW * 0.038;
-
-  ctx.save();
-  ctx.lineCap    = "round";
-  ctx.lineJoin   = "round";
-  ctx.strokeStyle = "rgba(6, 4, 12, 0.90)";
-  ctx.shadowColor = "rgba(0, 0, 0, 0.40)";
-  ctx.shadowBlur  = 3;
-
-  // Upper lid tapered inner→outer
-  for (let i = 0; i < top.length - 1; i++) {
-    const t = i / (top.length - 1);
-    ctx.lineWidth = maxLW * (0.22 + 0.78 * t);
-    ctx.beginPath();
-    ctx.moveTo(top[i].x, top[i].y);
-    ctx.lineTo(top[i + 1].x, top[i + 1].y);
-    ctx.stroke();
-  }
-
-  // Cat-eye wing
-  if (style === "cat_eye") {
-    const outer  = top[top.length - 1];
-    const prev   = top[top.length - 2];
-    const angle  = Math.atan2(outer.y - prev.y, outer.x - prev.x) - Math.PI / 5.5;
-    const wingLen = eyeW * 0.22;
-    ctx.lineWidth  = maxLW * 0.50;
-    ctx.shadowBlur = 2;
-    ctx.beginPath();
-    ctx.moveTo(outer.x, outer.y);
-    ctx.lineTo(outer.x + Math.cos(angle) * wingLen, outer.y + Math.sin(angle) * wingLen);
-    ctx.stroke();
-  }
-
-  // Lower lid for alt_hat
-  if (style === "alt_hat") {
-    ctx.shadowBlur = 2;
-    for (let i = 0; i < bot.length - 1; i++) {
-      const t = i / (bot.length - 1);
-      ctx.lineWidth = maxLW * 0.46 * (0.22 + 0.78 * (1 - t));
-      ctx.beginPath();
-      ctx.moveTo(bot[i].x, bot[i].y);
-      ctx.lineTo(bot[i + 1].x, bot[i + 1].y);
-      ctx.stroke();
-    }
-  }
-
-  ctx.restore();
-}
-
-// ── Lip shape modifiers (Three.js Y-up: up = +Y, down = -Y) ──────────────────
+// ── Lip shape modifiers (Three.js Y-up: up = +Y) ─────────────────────────────
 function modLipUpper(points: Pt[], style: LipRecommendation["style"], lipW: number): Pt[] {
   return points.map((p, i) => {
     const t = i / (points.length - 1);
@@ -333,79 +316,67 @@ function modLipLower(points: Pt[], style: LipRecommendation["style"], lipW: numb
   });
 }
 
-// ── Lip renderer (Three.js ExtrudeGeometry for 3D volume) ────────────────────
+// ── Lip renderer — Three.js ExtrudeGeometry for 3-D volume ───────────────────
 function drawLips3d(
-  ctx: CanvasRenderingContext2D,
-  lm: LM[],
-  style: LipRecommendation["style"],
-  w: number,
-  h: number,
+  ctx:      CanvasRenderingContext2D,
+  lm:       LM[],
+  style:    LipRecommendation["style"],
+  w:        number,
+  h:        number,
   renderer: THREE.WebGLRenderer,
-  camera: THREE.OrthographicCamera
+  camera:   THREE.OrthographicCamera,
 ) {
   const upperRaw = pts(lm, LIP_UP, w, h);
   const lowerRaw = pts(lm, LIP_LO, w, h);
   const lipW     = Math.abs(upperRaw[upperRaw.length - 1].x - upperRaw[0].x);
 
-  // Flip Y for Three.js
   const upper = fyAll(upperRaw, h);
   const lower = fyAll(lowerRaw, h);
-
   const modUp = modLipUpper(upper, style, lipW);
   const modLo = modLipLower(lower, style, lipW);
 
-  // Closed lip outline shape
   const lipShape = new THREE.Shape();
-  smoothShape(lipShape, modUp, true);   // upper lip left→right
-  smoothShape(lipShape, modLo, false);  // lower lip continues right→left
+  smoothShape(lipShape, modUp, true);
+  smoothShape(lipShape, modLo, false);
   lipShape.closePath();
 
   renderer.setSize(w, h);
 
-  // ── Layer 1: 3D extruded base (multiply blend) ────────────────────────────
+  // ── Layer 1: 3-D extruded base (multiply blend) ───────────────────────────
   {
     const depth  = clamp(lipW * 0.07, 4, 20);
-    const bSize  = clamp(lipW * 0.028, 1.5, 8);
-    const bThick = clamp(lipW * 0.035, 2, 10);
-
     const extrudeSettings: THREE.ExtrudeGeometryOptions = {
       depth,
-      bevelEnabled: true,
-      bevelSegments: 4,
-      bevelSize:      bSize,
-      bevelThickness: bThick,
+      bevelEnabled:   true,
+      bevelSegments:  4,
+      bevelSize:      clamp(lipW * 0.028, 1.5, 8),
+      bevelThickness: clamp(lipW * 0.035, 2,   10),
       bevelOffset:    0,
     };
 
     const scene   = new THREE.Scene();
-    const ambient = new THREE.AmbientLight(0xffffff, 0.60);
-    scene.add(ambient);
-
-    // Main front light — highlights the forward-facing extruded surface
+    scene.add(new THREE.AmbientLight(0xffffff, 0.60));
     const front = new THREE.DirectionalLight(0xffffff, 1.0);
     front.position.set(w * 0.5, h * 1.3, 180);
     scene.add(front);
-
-    // Soft fill from below for the lower lip
     const fill = new THREE.DirectionalLight(0xfffaf8, 0.30);
-    fill.position.set(w * 0.5, h * -0.3, 100);
+    fill.position.set(w * 0.5, -h * 0.3, 100);
     scene.add(fill);
 
     const geo = new THREE.ExtrudeGeometry(lipShape, extrudeSettings);
     const mat = new THREE.MeshPhongMaterial({
-      color:    new THREE.Color(0.882, 0.345, 0.424),
-      specular: new THREE.Color(1.0, 0.85, 0.85),
-      shininess: 90,
+      color:       new THREE.Color(0.882, 0.345, 0.424),
+      specular:    new THREE.Color(1.0, 0.85, 0.85),
+      shininess:   90,
       transparent: true,
-      opacity:     0.80,
+      opacity:     0.78,
       depthWrite:  false,
-      side: THREE.FrontSide,
+      side:        THREE.FrontSide,
     });
     scene.add(new THREE.Mesh(geo, mat));
 
     renderer.clear();
     renderer.render(scene, camera);
-
     ctx.save();
     ctx.globalCompositeOperation = "multiply";
     ctx.drawImage(renderer.domElement, 0, 0);
@@ -415,75 +386,44 @@ function drawLips3d(
     geo.dispose();
   }
 
-  // ── Layer 2: Gradient depth fill (normal blend) ────────────────────────────
+  // ── Layer 2: gradient fill (normal blend) — in canvas coords ─────────────
   {
-    const allLipPts = [...modUp, ...modLo];
-    const minX = Math.min(...allLipPts.map((p) => p.x));
-    const maxX = Math.max(...allLipPts.map((p) => p.x));
-    const minY = Math.min(...allLipPts.map((p) => p.y));
-    const maxY = Math.max(...allLipPts.map((p) => p.y));
-    const cx   = (minX + maxX) / 2;
-    // In Three.js Y-up, minY = lip bottom (screen bottom), maxY = lip top
-    // Gradient from bottom (minY) to top (maxY)
-    const grad = ctx.createLinearGradient(cx, h - minY, cx, h - maxY);
-    grad.addColorStop(0,    "rgba(230, 95, 115, 0.28)");
-    grad.addColorStop(0.38, "rgba(205, 68,  88, 0.14)");
-    grad.addColorStop(1,    "rgba(155, 38,  55, 0.30)");
+    const upC = modUp.map((p) => fy(p, h));
+    const loC = modLo.map((p) => fy(p, h));
 
-    // Draw the lip path directly on canvas for gradient
+    const allC  = [...upC, ...loC];
+    const minX  = Math.min(...allC.map((p) => p.x));
+    const maxX  = Math.max(...allC.map((p) => p.x));
+    const minY  = Math.min(...allC.map((p) => p.y));
+    const maxY  = Math.max(...allC.map((p) => p.y));
+    const cx    = (minX + maxX) / 2;
+
+    const grad = ctx.createLinearGradient(cx, minY, cx, maxY);
+    grad.addColorStop(0,    "rgba(240, 100, 120, 0.26)");
+    grad.addColorStop(0.40, "rgba(210,  70,  90, 0.13)");
+    grad.addColorStop(1,    "rgba(160,  40,  58, 0.28)");
+
     ctx.save();
     ctx.beginPath();
-    const upCanvas = modUp.map((p) => fy(p, h));
-    const loCanvas = modLo.map((p) => fy(p, h));
-    upCanvas.forEach((p, i) => {
-      if (i === 0) ctx.moveTo(p.x, p.y);
-      else {
-        const nx = upCanvas[Math.min(i + 1, upCanvas.length - 1)];
-        const mx = (p.x + nx.x) / 2;
-        const my = (p.y + nx.y) / 2;
-        if (i < upCanvas.length - 1) ctx.quadraticCurveTo(p.x, p.y, mx, my);
-        else ctx.lineTo(p.x, p.y);
-      }
-    });
-    loCanvas.slice(1).forEach((p, i) => {
-      const idx = i + 1;
-      const nx  = loCanvas[Math.min(idx + 1, loCanvas.length - 1)];
-      const mx  = (p.x + nx.x) / 2;
-      const my  = (p.y + nx.y) / 2;
-      if (idx < loCanvas.length - 1) ctx.quadraticCurveTo(p.x, p.y, mx, my);
-      else ctx.lineTo(p.x, p.y);
-    });
+    smoothC(ctx, upC, true);
+    smoothC(ctx, loC, false);
     ctx.closePath();
     ctx.fillStyle = grad;
     ctx.fill();
     ctx.restore();
   }
 
-  // ── Layer 3: Lip liner ─────────────────────────────────────────────────────
+  // ── Layer 3: lip liner stroke ─────────────────────────────────────────────
   {
-    const upCanvas = modUp.map((p) => fy(p, h));
-    const loCanvas = modLo.map((p) => fy(p, h));
+    const upC = modUp.map((p) => fy(p, h));
+    const loC = modLo.map((p) => fy(p, h));
 
     ctx.save();
     ctx.beginPath();
-    upCanvas.forEach((p, i) => {
-      if (i === 0) ctx.moveTo(p.x, p.y);
-      else {
-        const nx = upCanvas[Math.min(i + 1, upCanvas.length - 1)];
-        if (i < upCanvas.length - 1)
-          ctx.quadraticCurveTo(p.x, p.y, (p.x + nx.x) / 2, (p.y + nx.y) / 2);
-        else ctx.lineTo(p.x, p.y);
-      }
-    });
-    loCanvas.slice(1).forEach((p, i) => {
-      const idx = i + 1;
-      const nx  = loCanvas[Math.min(idx + 1, loCanvas.length - 1)];
-      if (idx < loCanvas.length - 1)
-        ctx.quadraticCurveTo(p.x, p.y, (p.x + nx.x) / 2, (p.y + nx.y) / 2);
-      else ctx.lineTo(p.x, p.y);
-    });
+    smoothC(ctx, upC, true);
+    smoothC(ctx, loC, false);
     ctx.closePath();
-    ctx.strokeStyle = "rgba(138, 32, 52, 0.60)";
+    ctx.strokeStyle = "rgba(138, 32, 52, 0.55)";
     ctx.lineWidth   = Math.max(0.7, lipW * 0.013);
     ctx.lineJoin    = "round";
     ctx.lineCap     = "round";
@@ -491,38 +431,34 @@ function drawLips3d(
     ctx.restore();
   }
 
-  // ── Layer 4: Gloss (screen blend) via Three.js ────────────────────────────
+  // ── Layer 4: gloss highlight (screen blend) ───────────────────────────────
   {
-    // Shine gradient texture: bright at UV.y=1 (top of lips in Y-up)
-    // CanvasTexture flipY=true: canvas Y=0 → UV.y=1 (top) → bright shine there
-    const shineCanvas = document.createElement("canvas");
-    shineCanvas.width  = 1;
-    shineCanvas.height = 64;
-    const sc   = shineCanvas.getContext("2d")!;
+    const shineC = document.createElement("canvas");
+    shineC.width = 1; shineC.height = 64;
+    const sc   = shineC.getContext("2d")!;
     const grad = sc.createLinearGradient(0, 0, 0, 64);
-    grad.addColorStop(0,   "rgba(255,255,255,0.30)"); // canvas top → lip top → bright
-    grad.addColorStop(0.45,"rgba(255,255,255,0.14)");
-    grad.addColorStop(1,   "rgba(255,255,255,0.0)");  // canvas bottom → lip bottom → none
+    grad.addColorStop(0,    "rgba(255,255,255,0.28)");
+    grad.addColorStop(0.45, "rgba(255,255,255,0.12)");
+    grad.addColorStop(1,    "rgba(255,255,255,0.00)");
     sc.fillStyle = grad;
     sc.fillRect(0, 0, 1, 64);
 
-    const shineTex = new THREE.CanvasTexture(shineCanvas);
-    shineTex.wrapS = THREE.ClampToEdgeWrapping;
-    shineTex.wrapT = THREE.ClampToEdgeWrapping;
+    const shineTex     = new THREE.CanvasTexture(shineC);
+    shineTex.wrapS     = THREE.ClampToEdgeWrapping;
+    shineTex.wrapT     = THREE.ClampToEdgeWrapping;
 
     const scene = new THREE.Scene();
     const geo   = new THREE.ShapeGeometry(lipShape);
     const mat   = new THREE.MeshBasicMaterial({
-      map: shineTex,
+      map:         shineTex,
       transparent: true,
-      opacity: 1.0,
-      depthWrite: false,
+      opacity:     1.0,
+      depthWrite:  false,
     });
     scene.add(new THREE.Mesh(geo, mat));
 
     renderer.clear();
     renderer.render(scene, camera);
-
     ctx.save();
     ctx.globalCompositeOperation = "screen";
     ctx.drawImage(renderer.domElement, 0, 0);
@@ -537,32 +473,28 @@ function drawLips3d(
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export function drawBeautyOverlay(
-  ctx: CanvasRenderingContext2D,
-  lm: LM[],
-  brow: BrowRecommendation,
+  ctx:      CanvasRenderingContext2D,
+  lm:       LM[],
+  brow:     BrowRecommendation,
   eyeliner: EyelinerRecommendation,
-  lip: LipRecommendation,
-  w: number,
-  h: number
+  lip:      LipRecommendation,
+  w:        number,
+  h:        number,
 ) {
+  // Brows: pure Canvas 2D (seed 1 = left pattern, seed 1000 = right)
+  drawBrow(ctx, lm, L_BROW_L, L_BROW_U, brow.shape, w, h, 1);
+  drawBrow(ctx, lm, R_BROW_L, R_BROW_U, brow.shape, w, h, 1000);
+
+  // Eyeliner: filled smooth shape
+  drawEyeliner(ctx, lm, L_EYE_TOP, L_EYE_BOT, eyeliner.style, w, h);
+  drawEyeliner(ctx, lm, R_EYE_TOP, R_EYE_BOT, eyeliner.style, w, h);
+
+  // Lips: Three.js 3-D extrude (only place WebGL is needed)
   let renderer: THREE.WebGLRenderer;
   try {
     renderer = getRenderer();
   } catch {
-    // WebGL unavailable — silently skip 3D overlay
     return;
   }
-
-  const camera = makeCamera(w, h);
-
-  // Brows: seed 1 for left, seed 1000 for right (different hair patterns)
-  drawBrow3d(ctx, lm, L_BROW_L, L_BROW_U, brow.shape, w, h, 1,    renderer, camera);
-  drawBrow3d(ctx, lm, R_BROW_L, R_BROW_U, brow.shape, w, h, 1000, renderer, camera);
-
-  // Eyeliner: Canvas 2D (thin lines gain nothing from 3D)
-  drawEyeliner(ctx, lm, L_EYE_TOP, L_EYE_BOT, eyeliner.style, w, h);
-  drawEyeliner(ctx, lm, R_EYE_TOP, R_EYE_BOT, eyeliner.style, w, h);
-
-  // Lips: 3D extruded for volume
-  drawLips3d(ctx, lm, lip.style, w, h, renderer, camera);
+  drawLips3d(ctx, lm, lip.style, w, h, renderer, makeCamera(w, h));
 }
