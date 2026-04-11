@@ -48,8 +48,8 @@ const L_BROW_U = [70, 63, 105, 66, 107]; // upper edge outer→inner
 const R_BROW_L = [276, 283, 282, 295, 285];
 const R_BROW_U = [300, 293, 334, 296, 336];
 
-const L_EYE_TOP = [33, 160, 158, 133];
-const L_EYE_BOT = [133, 153, 144, 33];
+const L_EYE_TOP = [133, 158, 160, 33];  // inner→outer (33=temporal outer corner)
+const L_EYE_BOT = [33, 144, 153, 133];  // outer→inner
 const R_EYE_TOP = [362, 385, 387, 263];
 const R_EYE_BOT = [263, 373, 380, 362];
 
@@ -138,8 +138,11 @@ function getRenderer(): THREE.WebGLRenderer {
 // Place objects at Three.js coords: x = canvas_x, y = canvas_h - canvas_y
 function makeCamera(w: number, h: number): THREE.OrthographicCamera {
   const cam = new THREE.OrthographicCamera(0, w, h, 0, -200, 200);
-  cam.position.set(w / 2, h / 2, 100);
-  cam.lookAt(w / 2, h / 2, 0);
+  // Camera must be at origin (not w/2, h/2) so the frustum maps pixel coords 1:1.
+  // With position=(0,0,100) and default look direction (-Z):
+  //   world_x → NDC_x = 2*x/w - 1  (x=0 → -1 left edge, x=w → 1 right edge) ✓
+  //   world_y = h-canvas_y → NDC_y = 2*(h-y)/h - 1  (y=0 top → 1, y=h bottom → -1) ✓
+  cam.position.set(0, 0, 100);
   return cam;
 }
 
